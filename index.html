@@ -3,18 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Boarding Simulation</title>
+    <title>Speaki's Adventure</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="spooky-mode">
 
-    <!-- Stage 1: Boarding -->
-    <div id="boarding-section" class="app-container">
+    <!-- Title Screen -->
+    <div id="title-screen">
+        <div class="title-bg" id="title-bg"></div>
+        <div class="title-center">
+            <div class="title-logo">✈️</div>
+            <h1 class="title-name">스피키의 모험</h1>
+            <p class="title-sub">Speaki's Adventure</p>
+            <button class="btn title-start-btn" id="btn-start">시작하기</button>
+        </div>
+    </div>
+
+    <!-- Stage 1: Boarding (auto) -->
+    <div id="boarding-section" class="app-container" style="display:none">
         <aside class="sidebar">
             <div class="sidebar-top">
                 <div class="logo">
-                    <p>Boarding Simulator</p>
+                    <p>스피키의 모험</p>
                 </div>
                 <button class="mobile-toggle" id="mobile-toggle" aria-label="Toggle Controls">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
@@ -37,8 +48,8 @@
                     </div>
                 </div>
                 <div class="stat-card controls-hint">
-                    <span class="stat-label">Controls</span>
-                    <span class="hint-text">← → 통로 이동 &nbsp;↑ ↓ 좌석 이동 &nbsp;Space 착석</span>
+                    <span class="stat-label">탑승 중</span>
+                    <span class="hint-text">스피키들이 자리를 찾아갑니다...</span>
                 </div>
             </div>
 
@@ -59,10 +70,7 @@
 
     <!-- Stage 2a: Story Overlay -->
     <div id="story-overlay">
-        <div class="story-content" id="story-content">
-            <div class="story-emoji" id="story-emoji"></div>
-            <div class="story-text" id="story-text"></div>
-        </div>
+        <div id="story-scene-container"></div>
     </div>
 
     <!-- Stage 2b: Crash Overlay -->
@@ -79,8 +87,8 @@
         <div id="battle-ui">
             <span id="enemy-hp">❤️ 100</span>
             <span id="power-ups"></span>
-            <span id="battle-hint">← → 이동 &nbsp; Space: 🎃 발사</span>
-            <span id="player-hp">💙 3</span>
+            <span id="battle-hint">← → ↑ ↓ 이동 &nbsp; Space: 🎃 발사</span>
+            <span id="player-hp">💙 5</span>
         </div>
         <div id="battle-enemy" class="battle-char enemy-char"></div>
         <div id="battle-player" class="battle-char player-char"></div>

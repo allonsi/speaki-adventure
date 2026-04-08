@@ -29,6 +29,98 @@ body {
 }
 
 /* ================================================================
+   Title Screen
+   ================================================================ */
+#title-screen {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at center, #0d1b2a 0%, #000 100%);
+    z-index: 200;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: opacity 0.5s ease;
+}
+
+.title-bg {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.title-spik {
+    position: absolute;
+    width: 44px;
+    height: 44px;
+    background-size: cover;
+    background-position: center;
+}
+
+.title-spik-normal  { background-image: url('assets/spik-normal.png'); }
+.title-spik-blocked { background-image: url('assets/spik-blocked.png'); }
+
+@keyframes walkRight {
+    0%   { left: -60px; }
+    100% { left: calc(100% + 60px); }
+}
+@keyframes walkLeft {
+    0%   { right: -60px; }
+    100% { right: calc(100% + 60px); }
+}
+
+.title-center {
+    position: relative;
+    text-align: center;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+.title-logo {
+    font-size: 72px;
+    animation: titleFloat 3s ease-in-out infinite;
+    line-height: 1;
+}
+
+.title-name {
+    font-size: 48px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -1px;
+}
+
+.title-sub {
+    font-size: 16px;
+    color: var(--text-muted);
+}
+
+.title-start-btn {
+    margin-top: 8px;
+    padding: 14px 48px;
+    font-size: 20px;
+    font-weight: 700;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 40px;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+    box-shadow: 0 0 30px rgba(59, 130, 246, 0.5);
+}
+.title-start-btn:hover {
+    transform: scale(1.06);
+    box-shadow: 0 0 40px rgba(59, 130, 246, 0.7);
+}
+
+@keyframes titleFloat {
+    0%, 100% { transform: translateY(0) rotate(-5deg); }
+    50%       { transform: translateY(-12px) rotate(5deg); }
+}
+
+/* ================================================================
    Layout
    ================================================================ */
 .app-container {
@@ -77,13 +169,6 @@ body {
     flex-wrap: wrap;
     align-items: center;
     gap: 16px;
-}
-
-.control-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 140px;
 }
 
 .action-buttons { display: flex; gap: 8px; align-items: center; }
@@ -229,7 +314,7 @@ body {
     transform: translate(-50%, -50%);
     box-shadow: 0 2px 4px rgba(0,0,0,0.3);
     z-index: 5;
-    transition: left 200ms linear, top 200ms linear;
+    transition: left 120ms linear, top 120ms linear;
 }
 
 .pax-moving { background-color: var(--pax-moving); }
@@ -248,7 +333,7 @@ body {
     color: var(--text-muted);
 }
 
-/* Spooky Mode (always active via body class) */
+/* Spooky Mode */
 body.spooky-mode .passenger {
     background-color: transparent !important;
     border: none !important;
@@ -278,39 +363,190 @@ body.spooky-mode .passenger.pax-seated {
     z-index: 90;
     justify-content: center;
     align-items: center;
+    overflow: hidden;
 }
 
-#story-overlay.lightning-flash {
-    animation: lightningBG 0.7s ease-out;
+#story-scene-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
 }
 
-.story-content {
-    text-align: center;
-    opacity: 0;
-    transition: opacity 0.4s ease;
+/* --- Scene Base --- */
+.scene-container {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    padding-bottom: 80px;
+    transition: opacity 0.5s ease;
 }
 
-.story-emoji {
-    font-size: 90px;
-    display: block;
-    margin-bottom: 24px;
-    line-height: 1;
-}
-
-.story-text {
+.scene-label {
     font-size: 32px;
     font-weight: 700;
     color: #fff;
     letter-spacing: -0.5px;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+    z-index: 10;
+    position: relative;
 }
 
-@keyframes lightningBG {
-    0%   { background-color: #000; }
-    10%  { background-color: #e0e8ff; }
-    20%  { background-color: #000; }
-    35%  { background-color: #8888ff; }
-    50%  { background-color: #000; }
-    100% { background-color: #000; }
+/* --- Takeoff Scene --- */
+.takeoff-scene {
+    background: linear-gradient(to top, #1a0d00 0%, #3a1a00 20%, #1a3a6e 60%, #0a1a3a 100%);
+}
+
+.takeoff-ground {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 25%;
+    background: linear-gradient(to top, #0a0a0a, #1a1a1a);
+}
+
+.takeoff-runway {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80px;
+    height: 25%;
+    background: #2a2a2a;
+    border-left: 3px solid #555;
+    border-right: 3px solid #555;
+}
+
+.takeoff-runway::after {
+    content: '';
+    position: absolute;
+    top: 10%; left: 50%; transform: translateX(-50%);
+    width: 6px; height: 60%;
+    background: repeating-linear-gradient(
+        to bottom,
+        #ffd700 0, #ffd700 20px,
+        transparent 20px, transparent 40px
+    );
+}
+
+.takeoff-plane {
+    position: absolute;
+    font-size: 60px;
+    line-height: 1;
+    animation: planeRollTakeoff 2.5s ease-in forwards;
+    bottom: 22%;
+    left: 50%;
+    transform-origin: center;
+}
+
+@keyframes planeRollTakeoff {
+    0%   { transform: translateX(-50%) rotate(0deg) translateY(0); }
+    40%  { transform: translateX(-30%) rotate(-8deg) translateY(0); }
+    100% { transform: translateX(120%) rotate(-25deg) translateY(-200px); }
+}
+
+/* --- Flying Scene --- */
+.flying-scene {
+    background: linear-gradient(to bottom, #0a2a6e 0%, #1a5aaa 40%, #5aaae8 80%, #aaddff 100%);
+}
+
+.scene-cloud {
+    position: absolute;
+    font-size: 52px;
+    line-height: 1;
+}
+
+.cloud-1 { top: 20%; animation: cloudDrift 6s ease-in-out infinite; }
+.cloud-2 { top: 40%; animation: cloudDrift 8s ease-in-out infinite reverse; animation-delay: -2s; }
+.cloud-3 { top: 60%; animation: cloudDrift 7s ease-in-out infinite; animation-delay: -4s; }
+
+@keyframes cloudDrift {
+    0%   { left: -10%; }
+    100% { left: 110%; }
+}
+
+.flying-plane {
+    position: absolute;
+    font-size: 60px;
+    top: 38%;
+    left: 50%;
+    transform: translateX(-50%);
+    animation: planeFloat 2.5s ease-in-out infinite;
+    z-index: 5;
+}
+
+@keyframes planeFloat {
+    0%, 100% { transform: translateX(-50%) translateY(0) rotate(-3deg); }
+    50%       { transform: translateX(-50%) translateY(-18px) rotate(3deg); }
+}
+
+/* --- Lightning Scene --- */
+.lightning-scene {
+    background: linear-gradient(to bottom, #050510 0%, #0a0a20 40%, #0f0f30 100%);
+}
+
+.storm-cloud {
+    position: absolute;
+    font-size: 70px;
+    line-height: 1;
+    animation: cloudShake 0.4s ease-in-out infinite;
+}
+
+.storm-cloud-1 { top: 5%; left: 10%; }
+.storm-cloud-2 { top: 8%; right: 10%; }
+.storm-cloud-3 { top: 2%; left: 42%; font-size: 90px; }
+
+@keyframes cloudShake {
+    0%, 100% { transform: translateX(0) translateY(0); }
+    25%  { transform: translateX(-3px) translateY(2px); }
+    75%  { transform: translateX(3px) translateY(-2px); }
+}
+
+.lightning-bolt {
+    position: absolute;
+    font-size: 80px;
+    top: 20%;
+    left: 50%;
+    transform: translateX(-50%);
+    animation: lightningStrike 0.6s ease-in-out infinite;
+    z-index: 5;
+}
+
+@keyframes lightningStrike {
+    0%, 45%, 55%, 100% { opacity: 0; }
+    5%, 10%, 50%        { opacity: 1; }
+}
+
+.lightning-bg-flash {
+    position: absolute;
+    inset: 0;
+    background: #e0e8ff;
+    animation: bgFlash 0.6s ease-in-out infinite;
+    z-index: 0;
+}
+
+@keyframes bgFlash {
+    0%, 40%, 60%, 100% { opacity: 0; }
+    5%, 10%, 50%        { opacity: 0.3; }
+}
+
+.storm-plane {
+    position: absolute;
+    font-size: 50px;
+    top: 55%;
+    left: 50%;
+    transform: translateX(-50%);
+    animation: stormPlane 1s ease-in-out infinite;
+}
+
+@keyframes stormPlane {
+    0%, 100% { transform: translateX(-50%) rotate(-5deg) translateY(0); }
+    25%  { transform: translateX(-53%) rotate(-15deg) translateY(-8px); }
+    75%  { transform: translateX(-47%) rotate(5deg) translateY(8px); }
 }
 
 /* ================================================================
@@ -370,6 +606,17 @@ body.spooky-mode .passenger.pax-seated {
     overflow: hidden;
 }
 
+/* Dividing line (visual hint for upper/lower territory) */
+#battle-stage::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    top: 48%;
+    height: 1px;
+    background: rgba(255,255,255,0.05);
+    pointer-events: none;
+}
+
 #battle-ui {
     position: absolute;
     top: 24px; left: 50%;
@@ -406,27 +653,25 @@ body.spooky-mode .passenger.pax-seated {
 /* Enemy */
 .enemy-char {
     width: 180px; height: 180px;
-    top: 80px; left: 50%;
     background-image: url('assets/spik-blocked.png');
-    /* translateX(-50%) is in every keyframe so JS left: X% stays centered */
     animation: enemyPulse 2s ease-in-out infinite;
+    /* top and left set by JS */
 }
 
 .enemy-char.enemy-hit {
     filter: brightness(5);
 }
 
-/* Player — NO background-color, NO filter, NO transition to prevent trail */
+/* Player */
 .player-char {
     width: 44px; height: 44px;
-    bottom: 80px;
     background: none;
     background-image: url('assets/spik-normal.png');
     background-size: cover;
     background-position: center;
-    transform: translateX(-50%);
+    transform: translate(-50%, -50%);
     transition: none;
-    will-change: left;
+    will-change: left, top;
 }
 
 .player-char.player-hit {
@@ -443,9 +688,10 @@ body.spooky-mode .passenger.pax-seated {
     line-height: 1;
 }
 
-/* Enemy pumpkins — larger */
+/* Enemy pumpkins */
 .enemy-pumpkin {
     font-size: 42px;
+    transform: translate(-50%, -50%);
 }
 
 /* Items */
@@ -477,7 +723,7 @@ body.spooky-mode .passenger.pax-seated {
     white-space: nowrap;
 }
 
-/* End screens (victory / game over) */
+/* End screens */
 #victory-screen,
 #game-over-screen {
     display: none;
@@ -506,24 +752,22 @@ body.spooky-mode .passenger.pax-seated {
 /* ================================================================
    Battle Animations
    ================================================================ */
-
-/* Enemy pulse — translateX(-50%) in every frame so `left: X%` stays centered */
 @keyframes enemyPulse {
-    0%, 100% { transform: translateX(-50%) scale(1); }
-    50%       { transform: translateX(-50%) scale(1.04); }
+    0%, 100% { transform: translate(-50%, -50%) scale(1); }
+    50%       { transform: translate(-50%, -50%) scale(1.04); }
 }
 
 @keyframes enemyDie {
-    0%   { transform: translateX(-50%) scale(1);           opacity: 1; }
-    30%  { transform: translateX(-50%) scale(1.4) rotate( 10deg); opacity: 0.8; }
-    60%  { transform: translateX(-50%) scale(0.6) rotate(-15deg); opacity: 0.4; }
-    100% { transform: translateX(-50%) scale(0)   rotate( 30deg); opacity: 0; }
+    0%   { transform: translate(-50%, -50%) scale(1);           opacity: 1; }
+    30%  { transform: translate(-50%, -50%) scale(1.4) rotate( 10deg); opacity: 0.8; }
+    60%  { transform: translate(-50%, -50%) scale(0.6) rotate(-15deg); opacity: 0.4; }
+    100% { transform: translate(-50%, -50%) scale(0)   rotate( 30deg); opacity: 0; }
 }
 
 @keyframes playerDie {
-    0%   { transform: translateX(-50%) scale(1);    opacity: 1; }
-    40%  { transform: translateX(-50%) scale(1.3) rotate(15deg);  opacity: 0.7; }
-    100% { transform: translateX(-50%) scale(0),                  opacity: 0; }
+    0%   { transform: translate(-50%, -50%) scale(1);    opacity: 1; }
+    40%  { transform: translate(-50%, -50%) scale(1.3) rotate(15deg); opacity: 0.7; }
+    100% { transform: translate(-50%, -50%) scale(0);    opacity: 0; }
 }
 
 @keyframes playerFlash {
@@ -575,6 +819,9 @@ body.spooky-mode .passenger.pax-seated {
 }
 
 @media (max-width: 800px) {
+    .title-name { font-size: 36px; }
+    .title-logo { font-size: 56px; }
+
     .sidebar { padding: 16px; }
     .sidebar-top { justify-content: space-between; }
     .logo { align-items: flex-start; text-align: left; }
@@ -600,7 +847,7 @@ body.spooky-mode .passenger.pax-seated {
     .hint-text { font-size: 10px; white-space: normal; }
 
     /* Battle on mobile */
-    .enemy-char { width: 120px; height: 120px; top: 60px; }
-    .player-char { width: 36px; height: 36px; bottom: 60px; }
+    .enemy-char { width: 120px; height: 120px; }
+    .player-char { width: 36px; height: 36px; }
     #battle-ui { gap: 16px; font-size: 15px; flex-wrap: wrap; justify-content: center; }
 }

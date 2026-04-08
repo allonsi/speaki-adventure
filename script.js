@@ -4,10 +4,10 @@ const AISLE_COL = 2;
 const TOTAL_PASSENGERS = ROWS * 4; // 40
 
 const sounds = {
-    seated:     new Audio('assets/sound-seated2.mp3'),
-    baggage:    new Audio('assets/sound-baggage.mp3'),
-    isleBlocked:new Audio('assets/sound-isle-blocked.mp3'),
-    seatBlocked:new Audio('assets/sound-seat-blocked.mp3')
+    seated:      new Audio('assets/sound-seated2.mp3'),
+    baggage:     new Audio('assets/sound-baggage.mp3'),
+    isleBlocked: new Audio('assets/sound-isle-blocked.mp3'),
+    seatBlocked: new Audio('assets/sound-seat-blocked.mp3')
 };
 
 function playSound(type) {
@@ -15,40 +15,40 @@ function playSound(type) {
     s.play().catch(() => {});
 }
 
-// Spooky mode is always on
-const isSpookyMode = true;
-
-function playSoundIfSpooky(type) {
-    playSound(type);
-}
-
-let currentStage = 'boarding'; // 'boarding' | 'story' | 'crash' | 'battle'
+// ================================================================
+// Game State
+// ================================================================
+let currentStage = 'title'; // 'title' | 'boarding' | 'story' | 'crash' | 'battle'
 
 // --- Boarding state ---
 let passengers = [], queue = [], cells = [];
 let grid = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
 let boardedCount = 0;
-let currentManual = null;
 
 // --- Battle state ---
 let playerX = 50;
-let playerHP = 3;
+let playerY = 75;
+let playerHP = 5;
 let playerInvincible = false;
 let enemyHP = 100;
-let enemyX = 50;
-let enemyDir = 1;
+let enemyCX = 50;   // enemy center X %
+let enemyCY = 20;   // enemy center Y %
+let enemyDirX = 1;
+let enemyDirY = 1;
 let enemyShootTimer = 80;
 let pumpkins = [];
 let enemyPumpkins = [];
-let activeItem = null;
+let activeItems = [];  // multiple items allowed
 let playerShotCount = 1;
 let bigPumpkinActive = false;
 let battleInterval = null;
 let battleKeysDown = {};
+let lastShotTime = 0;
 
+const SHOT_COOLDOWN   = 380;  // ms between shots
+const ITEM_EXPIRE_MS  = 180000; // 3 minutes
 const ENEMY_INIT_SIZE = 180;
 const ENEMY_MIN_SIZE  = 80;
-const ENEMY_CENTER_Y  = 80 + ENEMY_INIT_SIZE / 2; // 170px — vertical center stays fixed
 
 // --- DOM refs ---
 const planeGrid       = document.getElementById('plane-grid');
@@ -58,6 +58,13 @@ const boardingSection = document.getElementById('boarding-section');
 const storyOverlay    = document.getElementById('story-overlay');
 const crashOverlay    = document.getElementById('crash-overlay');
 const battleStageEl   = document.getElementById('battle-stage');
+const titleScreen     = document.getElementById('title-screen');
+
+// --- Button handlers ---
+document.getElementById('btn-start').addEventListener('click', startFromTitle);
+document.getElementById('btn-reset').addEventListener('click', resetGame);
+document.getElementById('btn-play-again').addEventListener('click', resetGame);
+document.getElementById('btn-retry').addEventListener('click', resetGame);
 
 // Mobile toggle
 const mobileToggle = document.getElementById('mobile-toggle');
@@ -66,9 +73,45 @@ if (mobileToggle && simControls) {
     mobileToggle.addEventListener('click', () => simControls.classList.toggle('active'));
 }
 
-document.getElementById('btn-reset').addEventListener('click', resetGame);
-document.getElementById('btn-play-again').addEventListener('click', resetGame);
-document.getElementById('btn-retry').addEventListener('click', resetGame);
+// ================================================================
+// Title Screen
+// ================================================================
+function setupTitleScreen() {
+    const bg = document.getElementById('title-bg');
+    const configs = [
+        { img: 'normal',  top: 12, dir: 'right', speed: 8,   delay: 0 },
+        { img: 'blocked', top: 28, dir: 'left',  speed: 6,   delay: -2 },
+        { img: 'normal',  top: 50, dir: 'right', speed: 11,  delay: -5 },
+        { img: 'blocked', top: 68, dir: 'left',  speed: 7,   delay: -1 },
+        { img: 'normal',  top: 80, dir: 'right', speed: 9,   delay: -4 },
+        { img: 'blocked', top: 38, dir: 'right', speed: 5.5, delay: -3 },
+        { img: 'normal',  top: 60, dir: 'left',  speed: 12,  delay: -6 },
+        { img: 'blocked', top: 20, dir: 'left',  speed: 7.5, delay: -1.5 },
+    ];
+    configs.forEach(cfg => {
+        const el = document.createElement('div');
+        el.className = `title-spik title-spik-${cfg.img}`;
+        el.style.top             = `${cfg.top}%`;
+        el.style.animationName   = cfg.dir === 'right' ? 'walkRight' : 'walkLeft';
+        el.style.animationDuration    = `${cfg.speed}s`;
+        el.style.animationDelay       = `${cfg.delay}s`;
+        el.style.animationIterationCount = 'infinite';
+        el.style.animationTimingFunction = 'linear';
+        bg.appendChild(el);
+    });
+}
+
+function startFromTitle() {
+    currentStage = 'boarding';
+    titleScreen.style.opacity = '0';
+    setTimeout(() => {
+        titleScreen.style.display = 'none';
+        boardingSection.style.display = '';
+        initGrid();
+        generatePassengers();
+        startAutoBoarding();
+    }, 500);
+}
 
 // ================================================================
 // Passenger class
@@ -88,9 +131,6 @@ class Passenger {
     }
 
     updatePos() {
-        // crossOffset: pixel center of each col within the plane-body
-        // desktop cols: 24+4+24+4+32+4+24+4+24 = total width
-        //   col0=12, col1=40, col2(aisle)=72, col3=104, col4=132
         const crossOffset = [12, 40, 72, 104, 132];
         const longOffset = this.row < 0 ? -24 : (this.row * 28 + 12);
         if (window.innerWidth <= 800) {
@@ -104,8 +144,8 @@ class Passenger {
 
     updateVisuals() {
         this.element.className = 'passenger';
-        if (this.state === 'SEATED')     this.element.classList.add('pax-seated');
-        else if (this.state === 'MANUAL') this.element.classList.add('pax-moving');
+        if (this.state === 'SEATED')      this.element.classList.add('pax-seated');
+        else if (this.state === 'MOVING') this.element.classList.add('pax-moving');
         else                              this.element.classList.add('pax-waiting');
         this.updatePos();
     }
@@ -151,7 +191,7 @@ function generatePassengers() {
         for (let c = 0; c < COLS; c++)
             if (c !== AISLE_COL) seats.push({ row: r, col: c });
 
-    // Shuffle
+    // Shuffle randomly
     for (let i = seats.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [seats[i], seats[j]] = [seats[j], seats[i]];
@@ -161,159 +201,153 @@ function generatePassengers() {
     passengers.forEach(p => planeGrid.appendChild(p.element));
 }
 
-function spawnNextManual() {
-    if (!queue.length) { currentManual = null; return; }
-    currentManual = queue.shift();
-    currentManual.state = 'MANUAL';
-    currentManual.row   = 0;
-    currentManual.col   = AISLE_COL;
-    currentManual.updateVisuals();
-}
-
 // ================================================================
-// Boarding controls
+// Auto-boarding (Stage 1 story mode)
 // ================================================================
-
-// Returns true when both seats on a side are occupied in that row
-function isSideFull(row, goingLeft) {
-    if (goingLeft) {
-        return cells[row]?.[0]?.classList.contains('occupied') &&
-               cells[row]?.[1]?.classList.contains('occupied');
-    }
-    return cells[row]?.[3]?.classList.contains('occupied') &&
-           cells[row]?.[4]?.classList.contains('occupied');
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function handleBoardingKey(e) {
-    if (!currentManual) return;
-    const key = e.key;
-    if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(key)) return;
-    e.preventDefault();
+async function autoBoardPassenger(pax) {
+    if (currentStage !== 'boarding') return;
 
-    const isMobile = window.innerWidth <= 800;
-    const inAisle  = currentManual.col === AISLE_COL;
+    pax.state = 'MOVING';
+    pax.row   = 0;
+    pax.col   = AISLE_COL;
+    pax.updateVisuals();
+    await delay(60);
 
-    if (isMobile) {
-        // Mobile: Up/Down = row (along plane), Left/Right = col (across aisle)
-        if (key === 'ArrowUp' && inAisle) {
-            if (currentManual.row > 0) currentManual.row--;
-        } else if (key === 'ArrowDown' && inAisle) {
-            if (currentManual.row < ROWS - 1) currentManual.row++;
-        } else if (key === 'ArrowLeft' && currentManual.col > 0) {
-            if (inAisle && isSideFull(currentManual.row, true)) {
-                playSoundIfSpooky('seatBlocked');
-            } else {
-                currentManual.col--;
-            }
-        } else if (key === 'ArrowRight' && currentManual.col < COLS - 1) {
-            if (inAisle && isSideFull(currentManual.row, false)) {
-                playSoundIfSpooky('seatBlocked');
-            } else {
-                currentManual.col++;
-            }
-        }
-    } else {
-        // Desktop: Left/Right = row (along plane), Up/Down = col (across aisle)
-        if (key === 'ArrowLeft' && inAisle) {
-            if (currentManual.row > 0) currentManual.row--;
-        } else if (key === 'ArrowRight' && inAisle) {
-            if (currentManual.row < ROWS - 1) currentManual.row++;
-        } else if (key === 'ArrowUp' && currentManual.col > 0) {
-            // Entering left seat side from aisle
-            if (inAisle && isSideFull(currentManual.row, true)) {
-                playSoundIfSpooky('seatBlocked');
-            } else {
-                currentManual.col--;
-            }
-        } else if (key === 'ArrowDown' && currentManual.col < COLS - 1) {
-            // Entering right seat side from aisle
-            if (inAisle && isSideFull(currentManual.row, false)) {
-                playSoundIfSpooky('seatBlocked');
-            } else {
-                currentManual.col++;
-            }
-        }
+    // Walk down aisle row by row
+    for (let r = 1; r <= pax.targetRow; r++) {
+        if (currentStage !== 'boarding') return;
+        pax.row = r;
+        pax.updateVisuals();
+        await delay(65);
     }
 
-    if (key === ' ') attemptSeat();
-    else currentManual.updateVisuals();
-}
-
-function attemptSeat() {
-    if (!currentManual) return;
-    const r = currentManual.row;
-    const c = currentManual.col;
-    if (c === AISLE_COL) { playSoundIfSpooky('seatBlocked'); return; }
-    const seatEl = cells[r]?.[c];
-    if (!seatEl || seatEl.classList.contains('occupied')) {
-        playSoundIfSpooky('seatBlocked');
-        return;
+    // Slide to seat column
+    const dir = pax.targetCol < AISLE_COL ? -1 : 1;
+    let c = AISLE_COL;
+    while (c !== pax.targetCol) {
+        if (currentStage !== 'boarding') return;
+        c += dir;
+        pax.col = c;
+        pax.updateVisuals();
+        await delay(65);
     }
 
-    seatEl.classList.add('occupied');
-    currentManual.state = 'SEATED';
-    currentManual.updateVisuals();
+    if (currentStage !== 'boarding') return;
+
+    // Seat passenger
+    const seatEl = cells[pax.targetRow]?.[pax.targetCol];
+    if (seatEl) seatEl.classList.add('occupied');
+    pax.state = 'SEATED';
+    pax.updateVisuals();
     boardedCount++;
-    playSoundIfSpooky('seated');
-    currentManual = null;
+    playSound('seated');
     updateDashboard();
 
-    if (boardedCount >= TOTAL_PASSENGERS) {
-        setTimeout(triggerStory, 600);
+    if (boardedCount === TOTAL_PASSENGERS) {
+        setTimeout(triggerStory, 800);
         return;
     }
-    setTimeout(spawnNextManual, 200);
+
+    // Kick off next passenger in this "lane"
+    if (queue.length > 0) {
+        const next = queue.shift();
+        setTimeout(() => autoBoardPassenger(next), 80);
+    }
+}
+
+function startAutoBoarding() {
+    // Start 3 concurrent boarding lanes with staggered starts
+    const CONCURRENT = 3;
+    for (let i = 0; i < Math.min(CONCURRENT, queue.length); i++) {
+        const pax = queue.shift();
+        setTimeout(() => autoBoardPassenger(pax), i * 550);
+    }
 }
 
 function updateDashboard() {
-    if (statBoarded)   statBoarded.innerText = `${boardedCount} / ${TOTAL_PASSENGERS}`;
-    if (progressFill)  progressFill.style.width = `${(boardedCount / TOTAL_PASSENGERS) * 100}%`;
+    if (statBoarded)  statBoarded.innerText = `${boardedCount} / ${TOTAL_PASSENGERS}`;
+    if (progressFill) progressFill.style.width = `${(boardedCount / TOTAL_PASSENGERS) * 100}%`;
 }
 
 // ================================================================
-// Stage 2a — Story sequence
+// Stage 2a — Animated Story sequence
 // ================================================================
 function triggerStory() {
     currentStage = 'story';
-
-    const storyContent = document.getElementById('story-content');
-    const emojiEl      = document.getElementById('story-emoji');
-    const textEl       = document.getElementById('story-text');
-
-    const messages = [
-        { emoji: '✈️',  text: '이륙 중...' },
-        { emoji: '🌤️', text: '비행 중...' },
-        { emoji: '⛈️', text: '⚡ 벼락이 쳤습니다!', lightning: true },
-    ];
-
     storyOverlay.style.display = 'flex';
-    storyContent.style.opacity = '0';
+    storyOverlay.style.opacity = '1';
+
+    const container = document.getElementById('story-scene-container');
+    const scenes = [buildTakeoffScene, buildFlyingScene, buildLightningScene];
     let i = 0;
 
     function showNext() {
-        if (i >= messages.length) {
-            storyContent.style.opacity = '0';
+        if (i >= scenes.length) {
+            storyOverlay.style.transition = 'opacity 0.6s ease';
+            storyOverlay.style.opacity = '0';
             setTimeout(() => {
                 storyOverlay.style.display = 'none';
+                storyOverlay.style.opacity = '1';
+                storyOverlay.style.transition = '';
                 triggerCrash();
-            }, 500);
+            }, 600);
             return;
         }
-        const msg = messages[i++];
-        storyContent.style.opacity = '0';
-        setTimeout(() => {
-            emojiEl.textContent = msg.emoji;
-            textEl.textContent  = msg.text;
-            storyContent.style.opacity = '1';
-            if (msg.lightning) {
-                storyOverlay.classList.add('lightning-flash');
-                setTimeout(() => storyOverlay.classList.remove('lightning-flash'), 700);
-            }
-            setTimeout(showNext, 1800);
-        }, 400);
+        container.innerHTML = '';
+        const scene = scenes[i++]();
+        scene.style.opacity = '0';
+        container.appendChild(scene);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            scene.style.opacity = '1';
+        }));
+        setTimeout(showNext, 2800);
     }
 
     showNext();
+}
+
+function buildTakeoffScene() {
+    const div = document.createElement('div');
+    div.className = 'scene-container takeoff-scene';
+    div.innerHTML = `
+        <div class="takeoff-ground"></div>
+        <div class="takeoff-runway"></div>
+        <div class="takeoff-plane">✈️</div>
+        <div class="scene-label">이륙 중...</div>
+    `;
+    return div;
+}
+
+function buildFlyingScene() {
+    const div = document.createElement('div');
+    div.className = 'scene-container flying-scene';
+    div.innerHTML = `
+        <div class="scene-cloud cloud-1">☁️</div>
+        <div class="scene-cloud cloud-2">☁️</div>
+        <div class="scene-cloud cloud-3">☁️</div>
+        <div class="flying-plane">✈️</div>
+        <div class="scene-label">비행 중...</div>
+    `;
+    return div;
+}
+
+function buildLightningScene() {
+    const div = document.createElement('div');
+    div.className = 'scene-container lightning-scene';
+    div.innerHTML = `
+        <div class="lightning-bg-flash"></div>
+        <div class="storm-cloud storm-cloud-1">⛈️</div>
+        <div class="storm-cloud storm-cloud-2">⛈️</div>
+        <div class="storm-cloud storm-cloud-3">⛈️</div>
+        <div class="lightning-bolt">⚡</div>
+        <div class="storm-plane">✈️</div>
+        <div class="scene-label">⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡</div>
+    `;
+    return div;
 }
 
 // ================================================================
@@ -339,34 +373,46 @@ function startBattleStage() {
     battleStageEl.style.display   = 'block';
 
     // Reset state
-    playerX           = 50;
-    playerHP          = 3;
-    playerInvincible  = false;
-    enemyHP           = 100;
-    enemyX            = 50;
-    enemyDir          = 1;
-    enemyShootTimer   = 80;
-    playerShotCount   = 1;
-    bigPumpkinActive  = false;
-    pumpkins          = [];
-    enemyPumpkins     = [];
+    playerX          = 50;
+    playerY          = 75;
+    playerHP         = 5;
+    playerInvincible = false;
+    enemyHP          = 100;
+    enemyCX          = 50;
+    enemyCY          = 20;
+    enemyDirX        = 1;
+    enemyDirY        = 1;
+    enemyShootTimer  = 80;
+    playerShotCount  = 1;
+    bigPumpkinActive = false;
+    lastShotTime     = 0;
+    pumpkins         = [];
+    enemyPumpkins    = [];
+    activeItems      = [];
 
     // UI
     document.getElementById('enemy-hp').textContent  = '❤️ 100';
-    document.getElementById('player-hp').textContent = '💙 3';
+    document.getElementById('player-hp').textContent = '💙 5';
     document.getElementById('power-ups').textContent  = '';
     document.getElementById('victory-screen').style.display   = 'none';
     document.getElementById('game-over-screen').style.display = 'none';
 
-    // Reset enemy element
+    // Reset enemy
     const enemyEl = document.getElementById('battle-enemy');
-    enemyEl.className        = 'battle-char enemy-char';
-    enemyEl.style.cssText    = `width:${ENEMY_INIT_SIZE}px; height:${ENEMY_INIT_SIZE}px; top:80px; left:50%; opacity:1; animation:'';`;
+    enemyEl.className  = 'battle-char enemy-char';
+    enemyEl.style.cssText = `
+        width:${ENEMY_INIT_SIZE}px;
+        height:${ENEMY_INIT_SIZE}px;
+        left:${enemyCX}%;
+        top:${enemyCY}%;
+        opacity:1;
+    `;
 
-    // Reset player element
+    // Reset player
     const playerEl = document.getElementById('battle-player');
     playerEl.className       = 'battle-char player-char';
     playerEl.style.left      = `${playerX}%`;
+    playerEl.style.top       = `${playerY}%`;
     playerEl.style.opacity   = '1';
     playerEl.style.animation = '';
 
@@ -380,18 +426,26 @@ function updateBattle() {
     const playerEl = document.getElementById('battle-player');
     const enemyEl  = document.getElementById('battle-enemy');
 
-    // --- Move player ---
-    if (battleKeysDown['ArrowLeft'])  playerX = Math.max(2,  playerX - 1);
-    if (battleKeysDown['ArrowRight']) playerX = Math.min(98, playerX + 1);
+    // --- Move player (4 directions) ---
+    const spd = 1.5;
+    if (battleKeysDown['ArrowLeft'])  playerX = Math.max(2,  playerX - spd);
+    if (battleKeysDown['ArrowRight']) playerX = Math.min(98, playerX + spd);
+    if (battleKeysDown['ArrowUp'])    playerY = Math.max(45, playerY - spd);
+    if (battleKeysDown['ArrowDown'])  playerY = Math.min(92, playerY + spd);
     playerEl.style.left = `${playerX}%`;
+    playerEl.style.top  = `${playerY}%`;
 
-    // --- Move enemy (oscillates left/right) ---
-    enemyX += enemyDir * 0.4;
-    if (enemyX > 80) { enemyX = 80; enemyDir = -1; }
-    if (enemyX < 20) { enemyX = 20; enemyDir =  1; }
-    enemyEl.style.left = `${enemyX}%`;
+    // --- Move enemy (free in upper half) ---
+    enemyCX += enemyDirX * 0.45;
+    enemyCY += enemyDirY * 0.3;
+    if (enemyCX > 80) { enemyCX = 80; enemyDirX = -1; }
+    if (enemyCX < 20) { enemyCX = 20; enemyDirX =  1; }
+    if (enemyCY > 40) { enemyCY = 40; enemyDirY = -1; }
+    if (enemyCY < 8)  { enemyCY = 8;  enemyDirY =  1; }
+    enemyEl.style.left = `${enemyCX}%`;
+    enemyEl.style.top  = `${enemyCY}%`;
 
-    // --- Enemy shoot ---
+    // --- Enemy shoot timer ---
     enemyShootTimer--;
     const shootInterval = enemyHP < 50 ? 40 : 90;
     if (enemyShootTimer <= 0) {
@@ -404,7 +458,7 @@ function updateBattle() {
 
     // --- Player pumpkins: move up, check enemy hit ---
     pumpkins = pumpkins.filter(p => {
-        p.y -= 1.5;
+        p.y -= 1.8;
         p.el.style.top = `${p.y}%`;
         const bRect = p.el.getBoundingClientRect();
         if (bRect.bottom > eRect.top && bRect.top < eRect.bottom &&
@@ -416,10 +470,12 @@ function updateBattle() {
         return true;
     });
 
-    // --- Enemy pumpkins: move down, check player hit ---
+    // --- Enemy pumpkins: move toward player, check player hit ---
     enemyPumpkins = enemyPumpkins.filter(ep => {
-        ep.y += 1.0;
-        ep.el.style.top = `${ep.y}%`;
+        ep.x += ep.vx;
+        ep.y += ep.vy;
+        ep.el.style.left = `${ep.x}%`;
+        ep.el.style.top  = `${ep.y}%`;
         if (!playerInvincible) {
             const epRect = ep.el.getBoundingClientRect();
             if (epRect.bottom > pRect.top && epRect.top < pRect.bottom &&
@@ -429,44 +485,77 @@ function updateBattle() {
                 return false;
             }
         }
-        if (ep.y > 110) { ep.el.remove(); return false; }
+        if (ep.y > 115 || ep.y < -15 || ep.x < -15 || ep.x > 115) {
+            ep.el.remove();
+            return false;
+        }
         return true;
     });
 
-    // --- Item pickup ---
-    if (activeItem) {
-        const iRect = activeItem.el.getBoundingClientRect();
+    // --- Items: expiry check + pickup ---
+    const now = Date.now();
+    activeItems = activeItems.filter(item => {
+        // Expire after 3 minutes
+        if (now - item.spawnTime > ITEM_EXPIRE_MS) {
+            item.el.style.transition = 'opacity 0.5s';
+            item.el.style.opacity    = '0';
+            setTimeout(() => item.el.remove(), 500);
+            return false;
+        }
+        // Pickup collision
+        const iRect = item.el.getBoundingClientRect();
         if (pRect.bottom > iRect.top && pRect.top < iRect.bottom &&
             pRect.right > iRect.left && pRect.left < iRect.right) {
-            collectItem();
+            collectItem(item);
+            return false;
         }
-    }
+        return true;
+    });
 }
 
 function shootEnemyPumpkin() {
     const el = document.createElement('div');
     el.className   = 'pumpkin enemy-pumpkin';
     el.textContent = '🎃';
-    const startY   = 28;
-    el.style.left  = `${enemyX}%`;
-    el.style.top   = `${startY}%`;
+
+    const startX = enemyCX;
+    const startY = enemyCY + 10;
+    el.style.left = `${startX}%`;
+    el.style.top  = `${startY}%`;
     battleStageEl.appendChild(el);
-    enemyPumpkins.push({ el, y: startY });
+
+    // Aim at player with slight speed
+    const dx = playerX - startX;
+    const dy = playerY - startY;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const speed = 1.4;
+    enemyPumpkins.push({
+        el,
+        x: startX,
+        y: startY,
+        vx: (dx / dist) * speed,
+        vy: (dy / dist) * speed
+    });
 }
 
 function shootPumpkin() {
     if (currentStage !== 'battle') return;
+
+    const now = Date.now();
+    if (now - lastShotTime < SHOT_COOLDOWN) return;
+    lastShotTime = now;
+
     const damage   = bigPumpkinActive ? 2 : 1;
     const fontSize = bigPumpkinActive ? '46px' : '26px';
 
     for (let i = 0; i < playerShotCount; i++) {
-        const spread  = playerShotCount > 1 ? (i - (playerShotCount - 1) / 2) * 7 : 0;
-        const el      = document.createElement('div');
+        const spread = playerShotCount > 1 ? (i - (playerShotCount - 1) / 2) * 7 : 0;
+        const el     = document.createElement('div');
         el.className  = 'pumpkin';
-        el.textContent= '🎃';
+        el.textContent = '🎃';
         el.style.fontSize = fontSize;
         const sx = playerX + spread;
-        const sy = 73;
+        const sy = playerY - 6;
         el.style.left = `${sx}%`;
         el.style.top  = `${sy}%`;
         battleStageEl.appendChild(el);
@@ -480,12 +569,11 @@ function hitEnemy(pumpkinData) {
     enemyHP = Math.max(0, enemyHP - pumpkinData.damage);
     playSound('isleBlocked');
 
-    // Shrink enemy: size = MIN_SIZE + HP (80→180)
+    // Shrink enemy via width/height, keep centered via CSS transform
     const newSize = ENEMY_MIN_SIZE + enemyHP;
     const enemyEl = document.getElementById('battle-enemy');
     enemyEl.style.width  = `${newSize}px`;
     enemyEl.style.height = `${newSize}px`;
-    enemyEl.style.top    = `${ENEMY_CENTER_Y - newSize / 2}px`; // keep center fixed
 
     enemyEl.classList.add('enemy-hit');
     setTimeout(() => enemyEl.classList.remove('enemy-hit'), 200);
@@ -513,12 +601,11 @@ function playerTakeDamage() {
 }
 
 function spawnItem() {
-    if (activeItem) { activeItem.el.remove(); activeItem = null; }
-
+    // New item does NOT remove existing ones
     const types = ['multishot', 'bigpumpkin'];
     const type  = types[Math.floor(Math.random() * 2)];
     const x     = 10 + Math.random() * 80;
-    const y     = 45 + Math.random() * 15;
+    const y     = 48 + Math.random() * 12;
 
     const el       = document.createElement('div');
     el.className   = 'battle-item';
@@ -527,28 +614,24 @@ function spawnItem() {
     el.style.top   = `${y}%`;
     battleStageEl.appendChild(el);
 
-    activeItem = { el, type };
+    activeItems.push({ el, type, spawnTime: Date.now() });
 }
 
-function collectItem() {
-    if (!activeItem) return;
-    const { type } = activeItem;
-    activeItem.el.remove();
-    activeItem = null;
-
-    if (type === 'multishot') {
+function collectItem(item) {
+    item.el.remove();
+    if (item.type === 'multishot') {
         playerShotCount = Math.min(playerShotCount + 1, 5);
     } else {
         bigPumpkinActive = true;
     }
     updatePowerUpDisplay();
-    showItemToast(type);
+    showItemToast(item.type);
 }
 
 function updatePowerUpDisplay() {
     let text = '';
-    if (playerShotCount > 1)  text += `✨×${playerShotCount} `;
-    if (bigPumpkinActive)     text += '💥';
+    if (playerShotCount > 1) text += `✨×${playerShotCount} `;
+    if (bigPumpkinActive)    text += '💥';
     document.getElementById('power-ups').textContent = text.trim();
 }
 
@@ -564,7 +647,7 @@ function endBattleWin() {
     clearInterval(battleInterval); battleInterval = null;
     pumpkins.forEach(p => p.el.remove());      pumpkins = [];
     enemyPumpkins.forEach(p => p.el.remove()); enemyPumpkins = [];
-    if (activeItem) { activeItem.el.remove(); activeItem = null; }
+    activeItems.forEach(i => i.el.remove());   activeItems = [];
 
     const enemyEl = document.getElementById('battle-enemy');
     enemyEl.style.animation = 'enemyDie 1s forwards';
@@ -577,7 +660,7 @@ function endBattleLose() {
     clearInterval(battleInterval); battleInterval = null;
     pumpkins.forEach(p => p.el.remove());      pumpkins = [];
     enemyPumpkins.forEach(p => p.el.remove()); enemyPumpkins = [];
-    if (activeItem) { activeItem.el.remove(); activeItem = null; }
+    activeItems.forEach(i => i.el.remove());   activeItems = [];
 
     const playerEl = document.getElementById('battle-player');
     playerEl.style.animation = 'playerDie 0.8s forwards';
@@ -587,44 +670,51 @@ function endBattleLose() {
 }
 
 // ================================================================
-// Reset
+// Reset — back to title screen
 // ================================================================
 function resetGame() {
     if (battleInterval) { clearInterval(battleInterval); battleInterval = null; }
     pumpkins.forEach(p => p.el.remove());      pumpkins = [];
     enemyPumpkins.forEach(p => p.el.remove()); enemyPumpkins = [];
-    if (activeItem) { activeItem.el.remove(); activeItem = null; }
+    activeItems.forEach(i => i.el.remove());   activeItems = [];
     document.querySelectorAll('.item-toast').forEach(t => t.remove());
     battleKeysDown = {};
 
-    currentStage      = 'boarding';
-    boardedCount      = 0;
-    currentManual     = null;
-    playerX           = 50;
-    playerHP          = 3;
-    playerInvincible  = false;
-    enemyHP           = 100;
-    enemyX            = 50;
-    enemyDir          = 1;
-    enemyShootTimer   = 80;
-    playerShotCount   = 1;
-    bigPumpkinActive  = false;
+    currentStage     = 'title';
+    boardedCount     = 0;
+    playerX          = 50;
+    playerY          = 75;
+    playerHP         = 5;
+    playerInvincible = false;
+    enemyHP          = 100;
+    enemyCX          = 50;
+    enemyCY          = 20;
+    enemyDirX        = 1;
+    enemyDirY        = 1;
+    enemyShootTimer  = 80;
+    playerShotCount  = 1;
+    bigPumpkinActive = false;
+    lastShotTime     = 0;
 
-    boardingSection.style.display   = '';
-    storyOverlay.style.display      = 'none';
-    document.getElementById('story-content').style.opacity = '0';
-    crashOverlay.style.display      = 'none';
-    crashOverlay.style.opacity      = '0';
-    battleStageEl.style.display     = 'none';
+    boardingSection.style.display = 'none';
+    storyOverlay.style.display    = 'none';
+    crashOverlay.style.display    = 'none';
+    crashOverlay.style.opacity    = '0';
+    battleStageEl.style.display   = 'none';
+    document.getElementById('story-scene-container').innerHTML = '';
 
     const playerEl = document.getElementById('battle-player');
     playerEl.style.animation = '';
     playerEl.style.opacity   = '1';
 
-    updateDashboard();
-    initGrid();
-    generatePassengers();
-    spawnNextManual();
+    // Back to title
+    titleScreen.style.display  = 'flex';
+    titleScreen.style.opacity  = '0';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        titleScreen.style.transition = 'opacity 0.5s ease';
+        titleScreen.style.opacity    = '1';
+    }));
+    setTimeout(() => { titleScreen.style.transition = ''; }, 600);
 }
 
 // ================================================================
@@ -632,11 +722,9 @@ function resetGame() {
 // ================================================================
 window.addEventListener('keydown', (e) => {
     battleKeysDown[e.key] = true;
-    if (currentStage === 'boarding') {
-        handleBoardingKey(e);
-    } else if (currentStage === 'battle') {
-        if (e.key === ' ') { e.preventDefault(); shootPumpkin(); }
-        if (['ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+    if (currentStage === 'battle') {
+        if (e.key === ' ')                                              { e.preventDefault(); shootPumpkin(); }
+        if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) e.preventDefault();
     }
 });
 
@@ -647,9 +735,7 @@ window.addEventListener('keyup', (e) => {
 // ================================================================
 // Init
 // ================================================================
-initGrid();
-generatePassengers();
-spawnNextManual();
+setupTitleScreen();
 
 window.addEventListener('resize', () => {
     passengers.forEach(p => p.updatePos());
