@@ -64,6 +64,11 @@ const btnReset = document.getElementById('btn-reset');
 const mobileToggle = document.getElementById('mobile-toggle');
 const simControls = document.getElementById('sim-controls');
 
+// Manual play controls
+const btnManual = document.getElementById('btn-manual');
+let manualMode = false;
+let currentManual = null;
+
 // Events
 if (mobileToggle && simControls) {
     mobileToggle.addEventListener('click', () => {
@@ -125,6 +130,104 @@ if (cbSpookyMode) {
         }
     });
 }
+
+// Manual play: let user move one passenger at a time with arrow keys and press Space to seat
+if (btnManual) {
+    btnManual.addEventListener('click', () => {
+        manualMode = !manualMode;
+        if (manualMode) {
+            btnManual.classList.add('active');
+            btnManual.innerText = 'Manual: On';
+            // pause automatic simulation
+            isRunning = false;
+            clearInterval(simInterval);
+            btnPlay.disabled = true;
+            btnPause.disabled = true;
+            spawnNextManual();
+        } else {
+            btnManual.classList.remove('active');
+            btnManual.innerText = 'Manual Play';
+            // clear current manual passenger if any
+            currentManual = null;
+        }
+    });
+}
+
+function spawnNextManual() {
+    if (!manualMode) return;
+    if (!queue || queue.length === 0) {
+        currentManual = null;
+        return;
+    }
+    currentManual = queue.shift();
+    currentManual.state = 'MANUAL';
+    currentManual.row = 0;
+    currentManual.col = 3;
+    currentManual.updateVisuals();
+}
+
+function handleManualKey(e) {
+    if (!manualMode || !currentManual) return;
+    const key = e.key;
+    if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].indexOf(key) === -1) return;
+    e.preventDefault();
+
+    if (window.innerWidth <= 800) {
+        // Mobile: row=top(세로), col=left(가로)
+        if (key === 'ArrowLeft') {
+            if (currentManual.col > 0) currentManual.col--;
+        } else if (key === 'ArrowRight') {
+            if (currentManual.col < COLS - 1) currentManual.col++;
+        } else if (key === 'ArrowUp') {
+            if (currentManual.row > 0) currentManual.row--;
+        } else if (key === 'ArrowDown') {
+            if (currentManual.row < ROWS - 1) currentManual.row++;
+        }
+    } else {
+        // Desktop: row=left(가로), col=top(세로)
+        if (key === 'ArrowLeft') {
+            if (currentManual.row > 0) currentManual.row--;
+        } else if (key === 'ArrowRight') {
+            if (currentManual.row < ROWS - 1) currentManual.row++;
+        } else if (key === 'ArrowUp') {
+            if (currentManual.col > 0) currentManual.col--;
+        } else if (key === 'ArrowDown') {
+            if (currentManual.col < COLS - 1) currentManual.col++;
+        }
+    }
+    if (key === ' ') {
+        // Attempt to seat
+        attemptSeat();
+    }
+    currentManual.updateVisuals();
+}
+
+function attemptSeat() {
+    if (!currentManual) return;
+    const r = currentManual.row;
+    const c = currentManual.col;
+    // can't seat in aisle
+    if (c === 3) return playSound('seatBlocked');
+    const seatEl = cells[r] && cells[r][c];
+    if (!seatEl) return playSound('seatBlocked');
+    if (seatEl.classList.contains('occupied')) {
+        playSound('seatBlocked');
+        return;
+    }
+
+    // seat the passenger
+    seatEl.classList.add('occupied');
+    currentManual.state = 'SEATED';
+    currentManual.updateVisuals();
+    boardedCount++;
+    playSound('seated');
+    currentManual = null;
+    updateDashboard();
+    // spawn next after short delay
+    setTimeout(spawnNextManual, 200);
+}
+
+window.addEventListener('keydown', handleManualKey);
 
 class Passenger {
     constructor(id, targetRow, targetCol) {
