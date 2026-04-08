@@ -1,305 +1,141 @@
-const ROWS = 30;
-const COLS = 7; // 0,1,2 = Left, 3 = Aisle, 4,5,6 = Right
-const TOTAL_PASSENGERS = ROWS * 6;
+const ROWS = 10;
+const COLS = 5; // 0,1 = Left seats | 2 = Aisle | 3,4 = Right seats
+const AISLE_COL = 2;
+const TOTAL_PASSENGERS = ROWS * 4; // 40
 
-// Audio setup
 const sounds = {
-    seated: new Audio('assets/sound-seated2.mp3'),
-    baggage: new Audio('assets/sound-baggage.mp3'),
-    isleBlocked: new Audio('assets/sound-isle-blocked.mp3'),
-    seatBlocked: new Audio('assets/sound-seat-blocked.mp3')
+    seated:     new Audio('assets/sound-seated2.mp3'),
+    baggage:    new Audio('assets/sound-baggage.mp3'),
+    isleBlocked:new Audio('assets/sound-isle-blocked.mp3'),
+    seatBlocked:new Audio('assets/sound-seat-blocked.mp3')
 };
 
 function playSound(type) {
-    if (!isSpookyMode) return;
-    const sound = sounds[type].cloneNode();
-    sound.play().catch(e => {
-        // block play until user interacts
-    });
+    const s = sounds[type].cloneNode();
+    s.play().catch(() => {});
 }
 
-let isSpookyMode = false;
+// Spooky mode is always on
+const isSpookyMode = true;
 
-// Simulator State
-let passengers = [];
-let queue = [];
+function playSoundIfSpooky(type) {
+    playSound(type);
+}
+
+let currentStage = 'boarding'; // 'boarding' | 'story' | 'crash' | 'battle'
+
+// --- Boarding state ---
+let passengers = [], queue = [], cells = [];
 let grid = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
-let cells = [];
-
-let tickCount = 0;
 let boardedCount = 0;
-let bottlenecks = 0;
-
-let isRunning = false;
-let simInterval = null;
-
-// Settings
-let tickDelay = 1000 / 10; // 10 TPS default
-let baggageProb = 0.8;
-let expectedBaggageTime = 3;
-let currentStrategy = 'random'; 
-
-// Set initial CSS var for animation
-document.documentElement.style.setProperty('--tick-speed', `${tickDelay}ms`);
-
-// DOM Elements
-const planeGrid = document.getElementById('plane-grid');
-const statTicks = document.getElementById('stat-ticks');
-const statBoarded = document.getElementById('stat-boarded');
-const statBottlenecks = document.getElementById('stat-bottlenecks');
-const progressFill = document.getElementById('progress-fill');
-
-const selectStrategy = document.getElementById('strategy-select');
-const inputBaggageProb = document.getElementById('baggage-prob');
-const inputBaggageTime = document.getElementById('baggage-time');
-const inputSpeed = document.getElementById('sim-speed');
-
-const labelBaggageProb = document.getElementById('baggage-prob-val');
-const labelBaggageTime = document.getElementById('baggage-time-val');
-const labelSpeed = document.getElementById('sim-speed-val');
-
-const btnPlay = document.getElementById('btn-play');
-const btnPause = document.getElementById('btn-pause');
-const btnReset = document.getElementById('btn-reset');
-const mobileToggle = document.getElementById('mobile-toggle');
-const simControls = document.getElementById('sim-controls');
-
-// Manual play controls
-const btnManual = document.getElementById('btn-manual');
-let manualMode = false;
 let currentManual = null;
 
-// Events
+// --- Battle state ---
+let playerX = 50;
+let playerHP = 3;
+let playerInvincible = false;
+let enemyHP = 100;
+let enemyX = 50;
+let enemyDir = 1;
+let enemyShootTimer = 80;
+let pumpkins = [];
+let enemyPumpkins = [];
+let activeItem = null;
+let playerShotCount = 1;
+let bigPumpkinActive = false;
+let battleInterval = null;
+let battleKeysDown = {};
+
+const ENEMY_INIT_SIZE = 180;
+const ENEMY_MIN_SIZE  = 80;
+const ENEMY_CENTER_Y  = 80 + ENEMY_INIT_SIZE / 2; // 170px — vertical center stays fixed
+
+// --- DOM refs ---
+const planeGrid       = document.getElementById('plane-grid');
+const statBoarded     = document.getElementById('stat-boarded');
+const progressFill    = document.getElementById('progress-fill');
+const boardingSection = document.getElementById('boarding-section');
+const storyOverlay    = document.getElementById('story-overlay');
+const crashOverlay    = document.getElementById('crash-overlay');
+const battleStageEl   = document.getElementById('battle-stage');
+
+// Mobile toggle
+const mobileToggle = document.getElementById('mobile-toggle');
+const simControls  = document.getElementById('sim-controls');
 if (mobileToggle && simControls) {
-    mobileToggle.addEventListener('click', () => {
-        simControls.classList.toggle('active');
-    });
-}
-inputBaggageProb.addEventListener('input', (e) => {
-    baggageProb = parseInt(e.target.value) / 100;
-    labelBaggageProb.innerText = `${e.target.value}%`;
-});
-
-inputBaggageTime.addEventListener('input', (e) => {
-    expectedBaggageTime = parseInt(e.target.value);
-    labelBaggageTime.innerText = expectedBaggageTime;
-});
-
-inputSpeed.addEventListener('input', (e) => {
-    const tps = parseInt(e.target.value);
-    labelSpeed.innerText = `${tps} TPS`;
-    tickDelay = 1000 / tps;
-    document.documentElement.style.setProperty('--tick-speed', `${tickDelay}ms`);
-
-    if (isRunning) {
-        clearInterval(simInterval);
-        simInterval = setInterval(gameLoop, tickDelay);
-    }
-});
-
-selectStrategy.addEventListener('change', (e) => {
-    currentStrategy = e.target.value;
-    resetSimulation();
-});
-
-btnPlay.addEventListener('click', () => {
-    if (boardedCount >= TOTAL_PASSENGERS) return;
-    isRunning = true;
-    btnPlay.disabled = true;
-    btnPause.disabled = false;
-    simInterval = setInterval(gameLoop, tickDelay);
-});
-
-btnPause.addEventListener('click', () => {
-    isRunning = false;
-    btnPlay.disabled = false;
-    btnPause.disabled = true;
-    clearInterval(simInterval);
-});
-
-btnReset.addEventListener('click', resetSimulation);
-
-const cbSpookyMode = document.getElementById('spooky-mode');
-if (cbSpookyMode) {
-    cbSpookyMode.addEventListener('change', (e) => {
-        isSpookyMode = e.target.checked;
-        if (isSpookyMode) {
-            document.body.classList.add('spooky-mode');
-        } else {
-            document.body.classList.remove('spooky-mode');
-        }
-    });
+    mobileToggle.addEventListener('click', () => simControls.classList.toggle('active'));
 }
 
-// Manual play: let user move one passenger at a time with arrow keys and press Space to seat
-if (btnManual) {
-    btnManual.addEventListener('click', () => {
-        manualMode = !manualMode;
-        if (manualMode) {
-            btnManual.classList.add('active');
-            btnManual.innerText = 'Manual: On';
-            // pause automatic simulation
-            isRunning = false;
-            clearInterval(simInterval);
-            btnPlay.disabled = true;
-            btnPause.disabled = true;
-            spawnNextManual();
-        } else {
-            btnManual.classList.remove('active');
-            btnManual.innerText = 'Manual Play';
-            // clear current manual passenger if any
-            currentManual = null;
-        }
-    });
-}
+document.getElementById('btn-reset').addEventListener('click', resetGame);
+document.getElementById('btn-play-again').addEventListener('click', resetGame);
+document.getElementById('btn-retry').addEventListener('click', resetGame);
 
-function spawnNextManual() {
-    if (!manualMode) return;
-    if (!queue || queue.length === 0) {
-        currentManual = null;
-        return;
-    }
-    currentManual = queue.shift();
-    currentManual.state = 'MANUAL';
-    currentManual.row = 0;
-    currentManual.col = 3;
-    currentManual.updateVisuals();
-}
-
-function handleManualKey(e) {
-    if (!manualMode || !currentManual) return;
-    const key = e.key;
-    if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].indexOf(key) === -1) return;
-    e.preventDefault();
-
-    if (window.innerWidth <= 800) {
-        // Mobile: row=top(세로), col=left(가로)
-        if (key === 'ArrowLeft') {
-            if (currentManual.col > 0) currentManual.col--;
-        } else if (key === 'ArrowRight') {
-            if (currentManual.col < COLS - 1) currentManual.col++;
-        } else if (key === 'ArrowUp') {
-            if (currentManual.row > 0) currentManual.row--;
-        } else if (key === 'ArrowDown') {
-            if (currentManual.row < ROWS - 1) currentManual.row++;
-        }
-    } else {
-        // Desktop: row=left(가로), col=top(세로)
-        if (key === 'ArrowLeft') {
-            if (currentManual.row > 0) currentManual.row--;
-        } else if (key === 'ArrowRight') {
-            if (currentManual.row < ROWS - 1) currentManual.row++;
-        } else if (key === 'ArrowUp') {
-            if (currentManual.col > 0) currentManual.col--;
-        } else if (key === 'ArrowDown') {
-            if (currentManual.col < COLS - 1) currentManual.col++;
-        }
-    }
-    if (key === ' ') {
-        // Attempt to seat
-        attemptSeat();
-    }
-    currentManual.updateVisuals();
-}
-
-function attemptSeat() {
-    if (!currentManual) return;
-    const r = currentManual.row;
-    const c = currentManual.col;
-    // can't seat in aisle
-    if (c === 3) return playSound('seatBlocked');
-    const seatEl = cells[r] && cells[r][c];
-    if (!seatEl) return playSound('seatBlocked');
-    if (seatEl.classList.contains('occupied')) {
-        playSound('seatBlocked');
-        return;
-    }
-
-    // seat the passenger
-    seatEl.classList.add('occupied');
-    currentManual.state = 'SEATED';
-    currentManual.updateVisuals();
-    boardedCount++;
-    playSound('seated');
-    currentManual = null;
-    updateDashboard();
-    // spawn next after short delay
-    setTimeout(spawnNextManual, 200);
-}
-
-window.addEventListener('keydown', handleManualKey);
-
+// ================================================================
+// Passenger class
+// ================================================================
 class Passenger {
     constructor(id, targetRow, targetCol) {
         this.id = id;
         this.targetRow = targetRow;
         this.targetCol = targetCol;
-        
         this.row = -1;
-        this.col = 3; // start in aisle
-        
-        this.state = 'QUEUE'; // QUEUE, AISLE, STOWING, WAITING, MOVING_TO_SEAT, SEATED
-        this.baggageTime = 0;
-        this.interferenceDelay = 0;
-        this.wasBlocked = false; // Tracks if they've newly stopped in the aisle
+        this.col = AISLE_COL;
+        this.state = 'QUEUE';
 
         this.element = document.createElement('div');
         this.element.className = 'passenger pax-waiting';
-        
-        // Initial position outside plane
         this.updatePos();
     }
 
     updatePos() {
-        const crossOffset = [12, 40, 68, 100, 132, 160, 188];
+        // crossOffset: pixel center of each col within the plane-body
+        // desktop cols: 24+4+24+4+32+4+24+4+24 = total width
+        //   col0=12, col1=40, col2(aisle)=72, col3=104, col4=132
+        const crossOffset = [12, 40, 72, 104, 132];
         const longOffset = this.row < 0 ? -24 : (this.row * 28 + 12);
         if (window.innerWidth <= 800) {
-            this.element.style.top = `${longOffset}px`;
+            this.element.style.top  = `${longOffset}px`;
             this.element.style.left = `${crossOffset[this.col]}px`;
         } else {
             this.element.style.left = `${longOffset}px`;
-            this.element.style.top = `${crossOffset[this.col]}px`;
+            this.element.style.top  = `${crossOffset[this.col]}px`;
         }
     }
 
     updateVisuals() {
         this.element.className = 'passenger';
-        if (this.state === 'STOWING') this.element.classList.add('pax-stowing');
-        else if (this.state === 'WAITING' || this.wasBlocked) this.element.classList.add('pax-waiting');
-        else if (this.state === 'AISLE' || this.state === 'QUEUE') this.element.classList.add('pax-moving');
-        else if (this.state === 'MOVING_TO_SEAT') this.element.classList.add('pax-moving');
-        else if (this.state === 'SEATED') this.element.classList.add('pax-seated');
-        
+        if (this.state === 'SEATED')     this.element.classList.add('pax-seated');
+        else if (this.state === 'MANUAL') this.element.classList.add('pax-moving');
+        else                              this.element.classList.add('pax-waiting');
         this.updatePos();
     }
 }
 
+// ================================================================
+// Boarding — grid init & passengers
+// ================================================================
 function initGrid() {
     planeGrid.innerHTML = '';
     cells = [];
     grid = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
 
     for (let r = 0; r < ROWS; r++) {
-        let rowCells = [];
+        const rowCells = [];
         for (let c = 0; c < COLS; c++) {
             const cell = document.createElement('div');
             cell.className = 'cell';
-            
-            if (c === 3) {
+            if (c === AISLE_COL) {
                 cell.classList.add('aisle');
             } else {
                 cell.classList.add('seat');
                 cell.id = `seat-${r}-${c}`;
             }
-
-            // Draw row labels
             if (c === 0) {
                 const label = document.createElement('div');
                 label.className = 'row-label';
                 label.innerText = r + 1;
                 cell.appendChild(label);
             }
-
             planeGrid.appendChild(cell);
             rowCells.push(cell);
         }
@@ -310,269 +146,511 @@ function initGrid() {
 function generatePassengers() {
     passengers = [];
     let id = 0;
+    const seats = [];
+    for (let r = 0; r < ROWS; r++)
+        for (let c = 0; c < COLS; c++)
+            if (c !== AISLE_COL) seats.push({ row: r, col: c });
 
-    let availableSeats = [];
-    for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-            if (c === 3) continue; // skip aisle
-            availableSeats.push({row: r, col: c});
-        }
+    // Shuffle
+    for (let i = seats.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [seats[i], seats[j]] = [seats[j], seats[i]];
     }
-
-    if (currentStrategy === 'random') {
-        availableSeats.forEach(seat => {
-            passengers.push(new Passenger(id++, seat.row, seat.col));
-        });
-        for (let i = passengers.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [passengers[i], passengers[j]] = [passengers[j], passengers[i]];
-        }
-    } else if (currentStrategy === 'b2f') {
-        availableSeats.forEach(seat => {
-            passengers.push(new Passenger(id++, seat.row, seat.col));
-        });
-        passengers.sort((a, b) => {
-            if (a.targetRow !== b.targetRow) {
-                return b.targetRow - a.targetRow; // back rows first
-            }
-            return Math.random() - 0.5; // shuffle within the same row
-        });
-    } else if (currentStrategy === 'block') {
-        availableSeats.forEach(seat => {
-            passengers.push(new Passenger(id++, seat.row, seat.col));
-        });
-        
-        const getGroup = (row) => {
-            if (row >= 20) return 0; // Rows 21-30 are 0-indexed as 20-29
-            if (row >= 10) return 1; // Rows 11-20 are 0-indexed as 10-19
-            return 2;                // Rows 1-10 are 0-indexed as 0-9
-        };
-
-        passengers.sort((a, b) => {
-            const groupA = getGroup(a.targetRow);
-            const groupB = getGroup(b.targetRow);
-            if (groupA !== groupB) {
-                return groupA - groupB;
-            }
-            return Math.random() - 0.5; // Random shuffle within the same block
-        });
-    } else if (currentStrategy === 'wilma') {
-        availableSeats.forEach(seat => {
-            passengers.push(new Passenger(id++, seat.row, seat.col));
-        });
-        const getGroup = (col) => {
-            if (col === 0 || col === 6) return 0; // Window
-            if (col === 1 || col === 5) return 1; // Middle
-            return 2; // Aisle
-        };
-        passengers.sort((a, b) => {
-            const groupA = getGroup(a.targetCol);
-            const groupB = getGroup(b.targetCol);
-            if (groupA !== groupB) {
-                return groupA - groupB;
-            }
-            return Math.random() - 0.5; // shuffle within same group
-        });
-    } else if (currentStrategy === 'steffen') {
-        let steffenOrder = [];
-        // Window -> Middle -> Aisle
-        // Right side then Left side
-        // Even rows then Odd rows (from back to front)
-        const colsOrder = [[6], [0], [5], [1], [4], [2]]; 
-        for (let cols of colsOrder) {
-            for (let parity of [0, 1]) { // 0 for even rows, 1 for odd rows
-                for (let r = ROWS - 1; r >= 0; r--) {
-                    if (r % 2 === parity) {
-                        for (let c of cols) {
-                            steffenOrder.push({row: r, col: c});
-                        }
-                    }
-                }
-            }
-        }
-        steffenOrder.forEach(seat => {
-            passengers.push(new Passenger(id++, seat.row, seat.col));
-        });
-    } else if (currentStrategy === 'no-assigned') {
-        // 모든 승객은 그냥 좌석과 상관없이 랜덤하게 아무 곳이나 앉음
-        // In terms of simulation outcome, randomly picking an empty seat is essentially 
-        // assigning a random permutation of passengers to random seats.
-        availableSeats.forEach(seat => {
-            passengers.push(new Passenger(id++, seat.row, seat.col));
-        });
-        for (let i = passengers.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [passengers[i], passengers[j]] = [passengers[j], passengers[i]];
-        }
-    }
-
+    seats.forEach(s => passengers.push(new Passenger(id++, s.row, s.col)));
     queue = [...passengers];
-    passengers.forEach(pax => {
-        planeGrid.appendChild(pax.element);
-    });
+    passengers.forEach(p => planeGrid.appendChild(p.element));
 }
 
-function resetSimulation() {
-    isRunning = false;
-    clearInterval(simInterval);
-    btnPlay.disabled = false;
-    btnPause.disabled = true;
-    
-    tickCount = 0;
-    boardedCount = 0;
-    bottlenecks = 0;
-    
-    updateDashboard();
-    initGrid();
-    generatePassengers();
+function spawnNextManual() {
+    if (!queue.length) { currentManual = null; return; }
+    currentManual = queue.shift();
+    currentManual.state = 'MANUAL';
+    currentManual.row   = 0;
+    currentManual.col   = AISLE_COL;
+    currentManual.updateVisuals();
 }
 
-function updateDashboard() {
-    statTicks.innerText = tickCount;
-    statBoarded.innerText = `${boardedCount} / ${TOTAL_PASSENGERS}`;
-    statBottlenecks.innerText = bottlenecks;
-    
-    const pct = (boardedCount / TOTAL_PASSENGERS) * 100;
-    progressFill.style.width = `${pct}%`;
-}
+// ================================================================
+// Boarding controls
+// ================================================================
 
-
-function startMovingToSeat(pax, r) {
-    grid[r][3] = null;
-    grid[r][pax.targetCol] = pax;
-    pax.state = 'MOVING_TO_SEAT';
-    
-    const step = pax.targetCol < pax.col ? -1 : 1;
-    pax.col += step;
-    
-    if (pax.col === pax.targetCol) {
-        pax.state = 'SEATED';
-        boardedCount++;
-        cells[pax.row][pax.targetCol].classList.add('occupied');
-        playSound('seated');
+// Returns true when both seats on a side are occupied in that row
+function isSideFull(row, goingLeft) {
+    if (goingLeft) {
+        return cells[row]?.[0]?.classList.contains('occupied') &&
+               cells[row]?.[1]?.classList.contains('occupied');
     }
+    return cells[row]?.[3]?.classList.contains('occupied') &&
+           cells[row]?.[4]?.classList.contains('occupied');
 }
 
-function checkInterferenceAndMove(pax, r) {
-    let interCount = 0;
-    if (pax.targetCol < 3) {
-        for (let c = pax.targetCol + 1; c < 3; c++) {
-            if (grid[r][c] !== null) interCount++;
-        }
-    } else if (pax.targetCol > 3) {
-        for (let c = 4; c < pax.targetCol; c++) {
-            if (grid[r][c] !== null) interCount++;
-        }
-    }
-    
-    if (interCount > 0) {
-        pax.interferenceDelay = interCount * 3;
-        pax.state = 'WAITING';
-        playSound('seatBlocked');
-    } else {
-        startMovingToSeat(pax, r);
-    }
-}
+function handleBoardingKey(e) {
+    if (!currentManual) return;
+    const key = e.key;
+    if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(key)) return;
+    e.preventDefault();
 
-function gameLoop() {
-    tickCount++;
-    let bottleneckOccurred = false;
+    const isMobile = window.innerWidth <= 800;
+    const inAisle  = currentManual.col === AISLE_COL;
 
-    // Process step-by-step movement into seats
-    passengers.forEach(pax => {
-        if (pax.state === 'MOVING_TO_SEAT') {
-            const step = pax.targetCol < pax.col ? -1 : 1;
-            pax.col += step;
-            if (pax.col === pax.targetCol) {
-                pax.state = 'SEATED';
-                boardedCount++;
-                const seatElement = cells[pax.row][pax.targetCol];
-                seatElement.classList.add('occupied');
-                playSound('seated');
-            }
-            pax.updateVisuals();
-        }
-    });
-
-    // Process from back to front of aisle
-    for (let r = ROWS - 1; r >= 0; r--) {
-        const pax = grid[r][3];
-        if (!pax) continue;
-
-        if (pax.state === 'WAITING') {
-            if (pax.interferenceDelay > 0) {
-                pax.interferenceDelay--;
-            }
-            if (pax.interferenceDelay <= 0) {
-                startMovingToSeat(pax, r);
-            }
-            bottleneckOccurred = true; // people behind might be blocked
-        } 
-        else if (pax.state === 'STOWING') {
-            if (pax.baggageTime > 0) {
-                pax.baggageTime--;
-            }
-            if (pax.baggageTime <= 0) {
-                checkInterferenceAndMove(pax, r);
-            }
-            bottleneckOccurred = true;
-        }
-        else if (pax.state === 'AISLE') {
-            if (pax.targetRow === r) {
-                if (Math.random() < baggageProb && expectedBaggageTime > 0) {
-                    pax.state = 'STOWING';
-                    pax.baggageTime = expectedBaggageTime;
-                    playSound('baggage');
-                } else {
-                    checkInterferenceAndMove(pax, r);
-                }
-                pax.wasBlocked = false;
-            } else if (r < ROWS - 1 && grid[r+1][3] === null) {
-                // Move forward
-                grid[r+1][3] = pax;
-                grid[r][3] = null;
-                pax.row = r + 1;
-                pax.wasBlocked = false;
+    if (isMobile) {
+        // Mobile: Up/Down = row (along plane), Left/Right = col (across aisle)
+        if (key === 'ArrowUp' && inAisle) {
+            if (currentManual.row > 0) currentManual.row--;
+        } else if (key === 'ArrowDown' && inAisle) {
+            if (currentManual.row < ROWS - 1) currentManual.row++;
+        } else if (key === 'ArrowLeft' && currentManual.col > 0) {
+            if (inAisle && isSideFull(currentManual.row, true)) {
+                playSoundIfSpooky('seatBlocked');
             } else {
-                // Blocked by passenger ahead
-                pax.wasBlocked = true;
+                currentManual.col--;
+            }
+        } else if (key === 'ArrowRight' && currentManual.col < COLS - 1) {
+            if (inAisle && isSideFull(currentManual.row, false)) {
+                playSoundIfSpooky('seatBlocked');
+            } else {
+                currentManual.col++;
             }
         }
-        pax.updateVisuals();
-    }
-
-    // Attempt to spawn new passenger into aisle row 0
-    if (queue.length > 0) {
-        if (grid[0][3] === null) {
-            const newPax = queue.shift();
-            newPax.state = 'AISLE';
-            newPax.row = 0;
-            newPax.wasBlocked = false;
-            grid[0][3] = newPax;
-            newPax.updateVisuals();
-        } else {
-            // Queue passenger is blocked from entering
-            bottlenecks++;
-            playSound('isleBlocked');
-            queue[0].wasBlocked = true;
-            queue[0].updateVisuals();
+    } else {
+        // Desktop: Left/Right = row (along plane), Up/Down = col (across aisle)
+        if (key === 'ArrowLeft' && inAisle) {
+            if (currentManual.row > 0) currentManual.row--;
+        } else if (key === 'ArrowRight' && inAisle) {
+            if (currentManual.row < ROWS - 1) currentManual.row++;
+        } else if (key === 'ArrowUp' && currentManual.col > 0) {
+            // Entering left seat side from aisle
+            if (inAisle && isSideFull(currentManual.row, true)) {
+                playSoundIfSpooky('seatBlocked');
+            } else {
+                currentManual.col--;
+            }
+        } else if (key === 'ArrowDown' && currentManual.col < COLS - 1) {
+            // Entering right seat side from aisle
+            if (inAisle && isSideFull(currentManual.row, false)) {
+                playSoundIfSpooky('seatBlocked');
+            } else {
+                currentManual.col++;
+            }
         }
     }
 
+    if (key === ' ') attemptSeat();
+    else currentManual.updateVisuals();
+}
+
+function attemptSeat() {
+    if (!currentManual) return;
+    const r = currentManual.row;
+    const c = currentManual.col;
+    if (c === AISLE_COL) { playSoundIfSpooky('seatBlocked'); return; }
+    const seatEl = cells[r]?.[c];
+    if (!seatEl || seatEl.classList.contains('occupied')) {
+        playSoundIfSpooky('seatBlocked');
+        return;
+    }
+
+    seatEl.classList.add('occupied');
+    currentManual.state = 'SEATED';
+    currentManual.updateVisuals();
+    boardedCount++;
+    playSoundIfSpooky('seated');
+    currentManual = null;
     updateDashboard();
 
     if (boardedCount >= TOTAL_PASSENGERS) {
-        isRunning = false;
-        clearInterval(simInterval);
-        btnPlay.disabled = false;
-        btnPause.disabled = true;
+        setTimeout(triggerStory, 600);
+        return;
+    }
+    setTimeout(spawnNextManual, 200);
+}
+
+function updateDashboard() {
+    if (statBoarded)   statBoarded.innerText = `${boardedCount} / ${TOTAL_PASSENGERS}`;
+    if (progressFill)  progressFill.style.width = `${(boardedCount / TOTAL_PASSENGERS) * 100}%`;
+}
+
+// ================================================================
+// Stage 2a — Story sequence
+// ================================================================
+function triggerStory() {
+    currentStage = 'story';
+
+    const storyContent = document.getElementById('story-content');
+    const emojiEl      = document.getElementById('story-emoji');
+    const textEl       = document.getElementById('story-text');
+
+    const messages = [
+        { emoji: '✈️',  text: '이륙 중...' },
+        { emoji: '🌤️', text: '비행 중...' },
+        { emoji: '⛈️', text: '⚡ 벼락이 쳤습니다!', lightning: true },
+    ];
+
+    storyOverlay.style.display = 'flex';
+    storyContent.style.opacity = '0';
+    let i = 0;
+
+    function showNext() {
+        if (i >= messages.length) {
+            storyContent.style.opacity = '0';
+            setTimeout(() => {
+                storyOverlay.style.display = 'none';
+                triggerCrash();
+            }, 500);
+            return;
+        }
+        const msg = messages[i++];
+        storyContent.style.opacity = '0';
+        setTimeout(() => {
+            emojiEl.textContent = msg.emoji;
+            textEl.textContent  = msg.text;
+            storyContent.style.opacity = '1';
+            if (msg.lightning) {
+                storyOverlay.classList.add('lightning-flash');
+                setTimeout(() => storyOverlay.classList.remove('lightning-flash'), 700);
+            }
+            setTimeout(showNext, 1800);
+        }, 400);
+    }
+
+    showNext();
+}
+
+// ================================================================
+// Stage 2b — Crash overlay
+// ================================================================
+function triggerCrash() {
+    currentStage = 'crash';
+    crashOverlay.style.display = 'flex';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        crashOverlay.style.opacity = '1';
+    }));
+    setTimeout(startBattleStage, 3000);
+}
+
+// ================================================================
+// Stage 3 — Battle
+// ================================================================
+function startBattleStage() {
+    currentStage = 'battle';
+    boardingSection.style.display = 'none';
+    crashOverlay.style.display    = 'none';
+    crashOverlay.style.opacity    = '0';
+    battleStageEl.style.display   = 'block';
+
+    // Reset state
+    playerX           = 50;
+    playerHP          = 3;
+    playerInvincible  = false;
+    enemyHP           = 100;
+    enemyX            = 50;
+    enemyDir          = 1;
+    enemyShootTimer   = 80;
+    playerShotCount   = 1;
+    bigPumpkinActive  = false;
+    pumpkins          = [];
+    enemyPumpkins     = [];
+
+    // UI
+    document.getElementById('enemy-hp').textContent  = '❤️ 100';
+    document.getElementById('player-hp').textContent = '💙 3';
+    document.getElementById('power-ups').textContent  = '';
+    document.getElementById('victory-screen').style.display   = 'none';
+    document.getElementById('game-over-screen').style.display = 'none';
+
+    // Reset enemy element
+    const enemyEl = document.getElementById('battle-enemy');
+    enemyEl.className        = 'battle-char enemy-char';
+    enemyEl.style.cssText    = `width:${ENEMY_INIT_SIZE}px; height:${ENEMY_INIT_SIZE}px; top:80px; left:50%; opacity:1; animation:'';`;
+
+    // Reset player element
+    const playerEl = document.getElementById('battle-player');
+    playerEl.className       = 'battle-char player-char';
+    playerEl.style.left      = `${playerX}%`;
+    playerEl.style.opacity   = '1';
+    playerEl.style.animation = '';
+
+    if (battleInterval) clearInterval(battleInterval);
+    battleInterval = setInterval(updateBattle, 50);
+}
+
+function updateBattle() {
+    if (currentStage !== 'battle') return;
+
+    const playerEl = document.getElementById('battle-player');
+    const enemyEl  = document.getElementById('battle-enemy');
+
+    // --- Move player ---
+    if (battleKeysDown['ArrowLeft'])  playerX = Math.max(2,  playerX - 1);
+    if (battleKeysDown['ArrowRight']) playerX = Math.min(98, playerX + 1);
+    playerEl.style.left = `${playerX}%`;
+
+    // --- Move enemy (oscillates left/right) ---
+    enemyX += enemyDir * 0.4;
+    if (enemyX > 80) { enemyX = 80; enemyDir = -1; }
+    if (enemyX < 20) { enemyX = 20; enemyDir =  1; }
+    enemyEl.style.left = `${enemyX}%`;
+
+    // --- Enemy shoot ---
+    enemyShootTimer--;
+    const shootInterval = enemyHP < 50 ? 40 : 90;
+    if (enemyShootTimer <= 0) {
+        shootEnemyPumpkin();
+        enemyShootTimer = shootInterval;
+    }
+
+    const eRect = enemyEl.getBoundingClientRect();
+    const pRect = playerEl.getBoundingClientRect();
+
+    // --- Player pumpkins: move up, check enemy hit ---
+    pumpkins = pumpkins.filter(p => {
+        p.y -= 1.5;
+        p.el.style.top = `${p.y}%`;
+        const bRect = p.el.getBoundingClientRect();
+        if (bRect.bottom > eRect.top && bRect.top < eRect.bottom &&
+            bRect.right > eRect.left && bRect.left < eRect.right) {
+            hitEnemy(p);
+            return false;
+        }
+        if (p.y < -10) { p.el.remove(); return false; }
+        return true;
+    });
+
+    // --- Enemy pumpkins: move down, check player hit ---
+    enemyPumpkins = enemyPumpkins.filter(ep => {
+        ep.y += 1.0;
+        ep.el.style.top = `${ep.y}%`;
+        if (!playerInvincible) {
+            const epRect = ep.el.getBoundingClientRect();
+            if (epRect.bottom > pRect.top && epRect.top < pRect.bottom &&
+                epRect.right > pRect.left && epRect.left < pRect.right) {
+                ep.el.remove();
+                playerTakeDamage();
+                return false;
+            }
+        }
+        if (ep.y > 110) { ep.el.remove(); return false; }
+        return true;
+    });
+
+    // --- Item pickup ---
+    if (activeItem) {
+        const iRect = activeItem.el.getBoundingClientRect();
+        if (pRect.bottom > iRect.top && pRect.top < iRect.bottom &&
+            pRect.right > iRect.left && pRect.left < iRect.right) {
+            collectItem();
+        }
     }
 }
 
-// Initial setup
+function shootEnemyPumpkin() {
+    const el = document.createElement('div');
+    el.className   = 'pumpkin enemy-pumpkin';
+    el.textContent = '🎃';
+    const startY   = 28;
+    el.style.left  = `${enemyX}%`;
+    el.style.top   = `${startY}%`;
+    battleStageEl.appendChild(el);
+    enemyPumpkins.push({ el, y: startY });
+}
+
+function shootPumpkin() {
+    if (currentStage !== 'battle') return;
+    const damage   = bigPumpkinActive ? 2 : 1;
+    const fontSize = bigPumpkinActive ? '46px' : '26px';
+
+    for (let i = 0; i < playerShotCount; i++) {
+        const spread  = playerShotCount > 1 ? (i - (playerShotCount - 1) / 2) * 7 : 0;
+        const el      = document.createElement('div');
+        el.className  = 'pumpkin';
+        el.textContent= '🎃';
+        el.style.fontSize = fontSize;
+        const sx = playerX + spread;
+        const sy = 73;
+        el.style.left = `${sx}%`;
+        el.style.top  = `${sy}%`;
+        battleStageEl.appendChild(el);
+        pumpkins.push({ el, y: sy, damage });
+    }
+    playSound('baggage');
+}
+
+function hitEnemy(pumpkinData) {
+    pumpkinData.el.remove();
+    enemyHP = Math.max(0, enemyHP - pumpkinData.damage);
+    playSound('isleBlocked');
+
+    // Shrink enemy: size = MIN_SIZE + HP (80→180)
+    const newSize = ENEMY_MIN_SIZE + enemyHP;
+    const enemyEl = document.getElementById('battle-enemy');
+    enemyEl.style.width  = `${newSize}px`;
+    enemyEl.style.height = `${newSize}px`;
+    enemyEl.style.top    = `${ENEMY_CENTER_Y - newSize / 2}px`; // keep center fixed
+
+    enemyEl.classList.add('enemy-hit');
+    setTimeout(() => enemyEl.classList.remove('enemy-hit'), 200);
+
+    document.getElementById('enemy-hp').textContent = `❤️ ${enemyHP}`;
+
+    if (enemyHP <= 0) endBattleWin();
+}
+
+function playerTakeDamage() {
+    if (playerInvincible) return;
+    playerHP--;
+    document.getElementById('player-hp').textContent = `💙 ${Math.max(0, playerHP)}`;
+
+    const playerEl = document.getElementById('battle-player');
+    playerEl.classList.add('player-hit');
+    setTimeout(() => playerEl.classList.remove('player-hit'), 1500);
+
+    playerInvincible = true;
+    setTimeout(() => { playerInvincible = false; }, 1500);
+
+    spawnItem();
+
+    if (playerHP <= 0) endBattleLose();
+}
+
+function spawnItem() {
+    if (activeItem) { activeItem.el.remove(); activeItem = null; }
+
+    const types = ['multishot', 'bigpumpkin'];
+    const type  = types[Math.floor(Math.random() * 2)];
+    const x     = 10 + Math.random() * 80;
+    const y     = 45 + Math.random() * 15;
+
+    const el       = document.createElement('div');
+    el.className   = 'battle-item';
+    el.textContent = type === 'multishot' ? '✨' : '💥';
+    el.style.left  = `${x}%`;
+    el.style.top   = `${y}%`;
+    battleStageEl.appendChild(el);
+
+    activeItem = { el, type };
+}
+
+function collectItem() {
+    if (!activeItem) return;
+    const { type } = activeItem;
+    activeItem.el.remove();
+    activeItem = null;
+
+    if (type === 'multishot') {
+        playerShotCount = Math.min(playerShotCount + 1, 5);
+    } else {
+        bigPumpkinActive = true;
+    }
+    updatePowerUpDisplay();
+    showItemToast(type);
+}
+
+function updatePowerUpDisplay() {
+    let text = '';
+    if (playerShotCount > 1)  text += `✨×${playerShotCount} `;
+    if (bigPumpkinActive)     text += '💥';
+    document.getElementById('power-ups').textContent = text.trim();
+}
+
+function showItemToast(type) {
+    const toast       = document.createElement('div');
+    toast.className   = 'item-toast';
+    toast.textContent = type === 'multishot' ? '✨ 다중 발사!' : '💥 거대 호박!';
+    battleStageEl.appendChild(toast);
+    setTimeout(() => toast.remove(), 2000);
+}
+
+function endBattleWin() {
+    clearInterval(battleInterval); battleInterval = null;
+    pumpkins.forEach(p => p.el.remove());      pumpkins = [];
+    enemyPumpkins.forEach(p => p.el.remove()); enemyPumpkins = [];
+    if (activeItem) { activeItem.el.remove(); activeItem = null; }
+
+    const enemyEl = document.getElementById('battle-enemy');
+    enemyEl.style.animation = 'enemyDie 1s forwards';
+    setTimeout(() => {
+        document.getElementById('victory-screen').style.display = 'flex';
+    }, 1000);
+}
+
+function endBattleLose() {
+    clearInterval(battleInterval); battleInterval = null;
+    pumpkins.forEach(p => p.el.remove());      pumpkins = [];
+    enemyPumpkins.forEach(p => p.el.remove()); enemyPumpkins = [];
+    if (activeItem) { activeItem.el.remove(); activeItem = null; }
+
+    const playerEl = document.getElementById('battle-player');
+    playerEl.style.animation = 'playerDie 0.8s forwards';
+    setTimeout(() => {
+        document.getElementById('game-over-screen').style.display = 'flex';
+    }, 800);
+}
+
+// ================================================================
+// Reset
+// ================================================================
+function resetGame() {
+    if (battleInterval) { clearInterval(battleInterval); battleInterval = null; }
+    pumpkins.forEach(p => p.el.remove());      pumpkins = [];
+    enemyPumpkins.forEach(p => p.el.remove()); enemyPumpkins = [];
+    if (activeItem) { activeItem.el.remove(); activeItem = null; }
+    document.querySelectorAll('.item-toast').forEach(t => t.remove());
+    battleKeysDown = {};
+
+    currentStage      = 'boarding';
+    boardedCount      = 0;
+    currentManual     = null;
+    playerX           = 50;
+    playerHP          = 3;
+    playerInvincible  = false;
+    enemyHP           = 100;
+    enemyX            = 50;
+    enemyDir          = 1;
+    enemyShootTimer   = 80;
+    playerShotCount   = 1;
+    bigPumpkinActive  = false;
+
+    boardingSection.style.display   = '';
+    storyOverlay.style.display      = 'none';
+    document.getElementById('story-content').style.opacity = '0';
+    crashOverlay.style.display      = 'none';
+    crashOverlay.style.opacity      = '0';
+    battleStageEl.style.display     = 'none';
+
+    const playerEl = document.getElementById('battle-player');
+    playerEl.style.animation = '';
+    playerEl.style.opacity   = '1';
+
+    updateDashboard();
+    initGrid();
+    generatePassengers();
+    spawnNextManual();
+}
+
+// ================================================================
+// Key handling
+// ================================================================
+window.addEventListener('keydown', (e) => {
+    battleKeysDown[e.key] = true;
+    if (currentStage === 'boarding') {
+        handleBoardingKey(e);
+    } else if (currentStage === 'battle') {
+        if (e.key === ' ') { e.preventDefault(); shootPumpkin(); }
+        if (['ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    battleKeysDown[e.key] = false;
+});
+
+// ================================================================
+// Init
+// ================================================================
 initGrid();
-resetSimulation();
+generatePassengers();
+spawnNextManual();
 
 window.addEventListener('resize', () => {
-    passengers.forEach(pax => pax.updatePos());
+    passengers.forEach(p => p.updatePos());
 });
