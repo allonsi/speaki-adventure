@@ -2,6 +2,7 @@
 
 1. Manual seat assignments of Speakis
 2. Shooting against 거대 스피키
+3. Publish at https://allonsi.github.io/speaki-adventure/ 
 
 - Acknowledgement: Forked from **Tick-based airplane boarding simulator (https://codingapple1.github.io/boarding-sim/)**
 
